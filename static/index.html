@@ -1,0 +1,742 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Transcript cleanup</title>
+<style>
+/* ── Terminal/HUD theme. Dark only: the look is the point. ─────────────── */
+:root {
+  color-scheme: dark;
+  --bg:#05070d; --panel:#0a0f18; --panel-2:#0d1420; --raise:#111a29;
+  --fg:#dbe9f4; --muted:#6d8599; --line:#182636; --line-hot:#24405c;
+  --accent:#00e5ff; --accent-dim:#0a7f92; --accent-2:#a855f7;
+  --flag:rgba(255,176,32,.15); --flag-fg:#ffc65c; --flag-line:rgba(255,176,32,.55);
+  --fail:rgba(255,77,109,.16); --fail-fg:#ff8095; --fail-line:rgba(255,77,109,.6);
+  --mono:ui-monospace,"SF Mono","JetBrains Mono",Menlo,Consolas,monospace;
+}
+* { box-sizing:border-box; }
+[hidden] { display:none !important; }
+
+body {
+  margin:0; min-height:100vh; background:var(--bg); color:var(--fg);
+  font:15px/1.6 ui-sans-serif,system-ui,-apple-system,sans-serif;
+  background-image:
+    linear-gradient(rgba(0,229,255,.030) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(0,229,255,.030) 1px, transparent 1px),
+    radial-gradient(ellipse 70% 45% at 50% -8%, rgba(0,229,255,.11), transparent 72%);
+  background-size:46px 46px, 46px 46px, 100% 100%;
+  background-attachment:fixed;
+}
+header, main { max-width:1700px; margin:0 auto; padding:0 22px; }
+
+/* ── Header ─────────────────────────────────────────────────────────── */
+header { padding:20px 22px 10px; display:flex; align-items:baseline; gap:16px; flex-wrap:wrap; }
+h1 {
+  margin:0; font:600 15px/1 var(--mono); letter-spacing:.22em; text-transform:uppercase;
+  color:var(--accent); text-shadow:0 0 18px rgba(0,229,255,.45);
+}
+h1::before { content:"▚ "; color:var(--accent-2); text-shadow:0 0 14px rgba(168,85,247,.6); }
+header small { font:11px/1 var(--mono); letter-spacing:.11em; color:var(--muted); text-transform:uppercase; }
+header small::before {
+  content:"●"; color:#22e07a; margin-right:7px; font-size:9px;
+  text-shadow:0 0 9px #22e07a; animation:pulse-dot 2.4s ease-in-out infinite;
+}
+@keyframes pulse-dot { 0%,100%{opacity:1} 50%{opacity:.35} }
+main { padding-bottom:30px; }
+
+/* ── Input panel ────────────────────────────────────────────────────── */
+details {
+  border:1px solid var(--line); border-radius:3px; margin:14px 0; background:var(--panel);
+  box-shadow:0 0 0 1px rgba(0,0,0,.4), 0 10px 34px rgba(0,0,0,.45);
+}
+details[open] { border-color:var(--line-hot); }
+summary {
+  padding:12px 16px; cursor:pointer; font:600 11px/1 var(--mono);
+  letter-spacing:.17em; text-transform:uppercase; color:var(--muted); list-style:none;
+}
+summary::-webkit-details-marker { display:none; }
+summary::before { content:"▸ "; color:var(--accent); }
+details[open] summary { color:var(--fg); border-bottom:1px solid var(--line); }
+details[open] summary::before { content:"▾ "; }
+.form { padding:16px; display:grid; gap:15px; }
+label { display:grid; gap:6px; font:11px/1.4 var(--mono); letter-spacing:.11em;
+        color:var(--muted); text-transform:uppercase; }
+
+#drop {
+  border:1px dashed var(--line-hot); border-radius:3px; padding:22px 16px; text-align:center;
+  background:
+    repeating-linear-gradient(45deg, transparent 0 11px, rgba(0,229,255,.022) 11px 22px),
+    var(--panel-2);
+  font:11px/1.7 var(--mono); letter-spacing:.07em; color:var(--muted); text-transform:uppercase;
+  transition:border-color .16s, box-shadow .16s, background-color .16s;
+}
+#drop.over {
+  border-color:var(--accent); border-style:solid; color:var(--accent);
+  box-shadow:0 0 0 1px var(--accent) inset, 0 0 32px rgba(0,229,255,.22);
+}
+#file { display:block; margin:12px auto 0; max-width:100%; font:11px var(--mono); color:var(--muted); }
+#file::file-selector-button {
+  font:600 10px/1 var(--mono); letter-spacing:.11em; text-transform:uppercase;
+  padding:8px 13px; margin-right:11px; cursor:pointer; border-radius:2px;
+  color:var(--accent); background:var(--raise); border:1px solid var(--line-hot);
+}
+#file::file-selector-button:hover { border-color:var(--accent); }
+
+textarea {
+  width:100%; padding:11px 12px; resize:vertical; border-radius:3px;
+  font:13px/1.65 var(--mono); color:var(--fg); background:var(--panel-2);
+  border:1px solid var(--line); transition:border-color .16s, box-shadow .16s;
+}
+textarea::placeholder { color:#3f556b; }
+textarea:focus {
+  outline:none; border-color:var(--accent);
+  box-shadow:0 0 0 1px var(--accent) inset, 0 0 22px rgba(0,229,255,.14);
+}
+#text { min-height:170px; } #gloss { min-height:94px; }
+#info {
+  font:11px/1 var(--mono); letter-spacing:.1em; color:var(--muted); text-transform:uppercase;
+  padding:9px 12px; border-left:2px solid var(--accent-dim); background:var(--panel-2); border-radius:0 3px 3px 0;
+}
+
+/* ── Buttons ────────────────────────────────────────────────────────── */
+button {
+  font:600 11px/1 var(--mono); letter-spacing:.13em; text-transform:uppercase;
+  padding:11px 17px; border-radius:2px; cursor:pointer;
+  color:var(--fg); background:var(--raise); border:1px solid var(--line-hot);
+  transition:color .16s, border-color .16s, box-shadow .16s, background-color .16s;
+}
+button:hover:not(:disabled) {
+  color:var(--accent); border-color:var(--accent);
+  box-shadow:0 0 0 1px var(--accent) inset, 0 0 20px rgba(0,229,255,.2);
+}
+button:focus-visible { outline:2px solid var(--accent); outline-offset:2px; }
+button.primary {
+  color:var(--accent); border-color:var(--accent);
+  background:linear-gradient(180deg, rgba(0,229,255,.19), rgba(0,229,255,.05));
+  text-shadow:0 0 11px rgba(0,229,255,.55); box-shadow:0 0 22px rgba(0,229,255,.16);
+}
+button.primary:hover:not(:disabled) { box-shadow:0 0 0 1px var(--accent) inset, 0 0 32px rgba(0,229,255,.36); }
+#stop { color:#ff8095; border-color:rgba(255,77,109,.5); }
+#stop:hover:not(:disabled) { color:#ff8095; border-color:#ff4d6d; box-shadow:0 0 0 1px #ff4d6d inset, 0 0 20px rgba(255,77,109,.28); }
+button:disabled { opacity:.32; cursor:not-allowed; }
+
+/* ── Status / telemetry ─────────────────────────────────────────────── */
+#status { display:grid; gap:9px; margin:8px 0 16px; }
+progress { width:100%; height:5px; appearance:none; border:none; background:var(--panel-2); border-radius:0; display:block; }
+progress::-webkit-progress-bar { background:var(--panel-2); }
+progress::-webkit-progress-value {
+  background:linear-gradient(90deg, var(--accent-dim), var(--accent));
+  box-shadow:0 0 16px var(--accent); transition:width .3s ease;
+}
+progress::-moz-progress-bar { background:var(--accent); box-shadow:0 0 16px var(--accent); }
+#stat { font:11px/1 var(--mono); letter-spacing:.13em; color:var(--accent); text-transform:uppercase; }
+#note { font:11px/1.5 var(--mono); letter-spacing:.07em; color:var(--muted); }
+#note.err {
+  color:#ff8095; font-weight:600; padding:10px 13px; border-radius:3px;
+  border:1px solid rgba(255,77,109,.45); border-left-width:3px; background:rgba(255,77,109,.09);
+}
+
+/* ── Results grid ───────────────────────────────────────────────────── */
+#tools { display:flex; gap:9px; flex-wrap:wrap; margin-bottom:13px; }
+#grid { display:grid; grid-template-columns:1fr 1fr 320px; gap:13px; height:78vh; min-height:420px; }
+.pane {
+  position:relative; display:flex; flex-direction:column; min-height:0; overflow:hidden;
+  border:1px solid var(--line); border-radius:3px; background:var(--panel);
+  box-shadow:0 10px 34px rgba(0,0,0,.42);
+}
+/* Corner brackets — the HUD tell. */
+.pane::before, .pane::after {
+  content:""; position:absolute; width:11px; height:11px; pointer-events:none; z-index:2;
+}
+.pane::before { top:-1px; left:-1px; border-top:2px solid var(--accent); border-left:2px solid var(--accent); }
+.pane::after { bottom:-1px; right:-1px; border-bottom:2px solid var(--accent); border-right:2px solid var(--accent); }
+.pane h2 {
+  margin:0; padding:11px 14px; font:600 11px/1 var(--mono); letter-spacing:.17em; text-transform:uppercase;
+  color:var(--muted); background:var(--panel-2); border-bottom:1px solid var(--line);
+}
+.pane h2::before { content:"// "; color:var(--accent); }
+#nflags { color:var(--accent); }
+.scroll {
+  position:relative; flex:1; overflow:auto; padding:15px;
+  white-space:pre-wrap; overflow-wrap:anywhere; font:14px/1.75 var(--mono); color:#c3d6e4;
+}
+#R { color:var(--fg); }
+.chunk + .chunk { margin-top:17px; padding-top:17px; border-top:1px dashed var(--line-hot); }
+.chunk.wait::before, .chunk.busy::before {
+  font:11px/1 var(--mono); letter-spacing:.15em; text-transform:uppercase; font-style:normal;
+}
+.chunk.wait::before { content:"◦ queued"; color:var(--muted); }
+.chunk.busy::before {
+  content:"▶ processing"; color:var(--accent); text-shadow:0 0 12px rgba(0,229,255,.6);
+  animation:blink 1.15s steps(2,end) infinite;
+}
+@keyframes blink { 0%,100%{opacity:1} 50%{opacity:.25} }
+
+mark {
+  background:var(--flag); color:var(--flag-fg); border-radius:0; padding:1px 3px;
+  border-bottom:1px solid var(--flag-line);
+}
+mark.fail { background:var(--fail); color:var(--fail-fg); border-bottom-color:var(--fail-line); }
+mark.pulse {
+  background:rgba(0,229,255,.2); color:#eaffff; outline:1px solid var(--accent);
+  box-shadow:0 0 22px rgba(0,229,255,.65);
+}
+
+/* ── Flags panel ────────────────────────────────────────────────────── */
+#flags { list-style:none; margin:0; padding:0; flex:1; overflow:auto; }
+#flags button {
+  display:grid; gap:4px; width:100%; text-align:left; padding:11px 14px; border:0;
+  border-bottom:1px solid var(--line); border-left:2px solid transparent;
+  border-radius:0; background:transparent; text-transform:none; letter-spacing:normal;
+  font-weight:400; box-shadow:none;
+}
+#flags button:hover, #flags button:focus-visible {
+  background:var(--panel-2); border-left-color:var(--accent); box-shadow:none; outline:none;
+}
+.loc { font:600 10px/1 var(--mono); letter-spacing:.13em; color:var(--accent); text-transform:uppercase; }
+.ex { font:11px/1.4 var(--mono); color:var(--muted); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.why { font:12.5px/1.5 ui-sans-serif,system-ui,sans-serif; color:var(--fg); }
+.empty { padding:15px; color:var(--muted); font:11px/1 var(--mono); letter-spacing:.11em; text-transform:uppercase; }
+
+/* ── Action-items panel + rendered Markdown ────────────────────────── */
+.gap { flex:1; }
+#briefpane { height:54vh; min-height:330px; margin-bottom:14px; }
+#bstate { color:var(--accent); font-weight:400; }
+#tr { margin:0; }
+#tr > #grid { padding:13px; height:72vh; }
+@media (max-width:1000px) { #tr > #grid { height:auto; } }
+
+.md { white-space:normal; font:14px/1.75 ui-sans-serif,system-ui,sans-serif; color:var(--fg); }
+.md h2 {
+  margin:26px 0 11px; padding-bottom:7px; border-bottom:1px solid var(--line);
+  font:600 11px/1 var(--mono); letter-spacing:.17em; text-transform:uppercase; color:var(--accent);
+}
+.md h2:first-child { margin-top:0; }
+.md h3 { margin:19px 0 8px; font:600 12.5px/1.3 var(--mono); letter-spacing:.07em; color:#eaf6ff; }
+.md h3::before { content:"▸ "; color:var(--accent-2); }
+.md h4 { margin:15px 0 6px; font:600 12px/1.3 var(--mono); color:var(--muted); }
+.md ol, .md ul { margin:0 0 13px; padding-left:25px; }
+.md li { margin:8px 0; padding-left:3px; }
+.md li::marker { color:var(--accent); font:600 12px var(--mono); }
+.md p { margin:0 0 13px; }
+.md strong { color:var(--accent); font-weight:600; }
+.md em { color:var(--flag-fg); font-style:italic; }
+.md code { font:12.5px var(--mono); background:var(--panel-2); border:1px solid var(--line);
+           padding:1px 5px; border-radius:2px; color:var(--flag-fg); }
+.md .empty-note { color:var(--muted); font:11px/1.7 var(--mono); letter-spacing:.11em; text-transform:uppercase; }
+.md .empty-note.err { color:#ff8095; text-transform:none; letter-spacing:.03em; }
+
+/* ── Agent activity log + approval checklist ───────────────────────── */
+.log { margin:0 0 18px; padding:11px 13px; border-left:2px solid var(--accent-dim);
+       background:var(--panel-2); font:11px/1.9 var(--mono); color:var(--muted); }
+.log div::before { content:"▸ "; color:var(--accent); }
+.log .tool { color:var(--accent-2); }
+
+ul.chk { list-style:none; margin:0 0 15px; padding:0; }
+ul.chk li { margin:0 0 4px; padding:11px 13px; border:1px solid var(--line); border-left:2px solid var(--line-hot);
+            border-radius:0 3px 3px 0; background:var(--panel-2); }
+ul.chk li.off { opacity:.42; }
+ul.chk li.blocking { border-left-color:var(--accent); }
+ul.chk label { display:flex; gap:10px; align-items:flex-start; cursor:pointer;
+               font:inherit; letter-spacing:normal; text-transform:none; color:var(--fg); }
+ul.chk input[type=checkbox] { margin:4px 0 0; width:15px; height:15px; accent-color:var(--accent); flex:none; cursor:pointer; }
+ul.chk .t { font-weight:600; }
+.meta { margin:5px 0 0 25px; display:flex; gap:8px; flex-wrap:wrap; }
+.meta span { font:10px/1 var(--mono); letter-spacing:.11em; text-transform:uppercase;
+             padding:4px 7px; border-radius:2px; border:1px solid var(--line-hot); color:var(--muted); }
+.meta .due { color:var(--flag-fg); border-color:var(--flag-line); }
+.meta .blk { color:var(--accent); border-color:var(--accent); }
+.d { margin:7px 0 0 25px; font-size:13px; color:#b6c9d8; }
+ul.chk blockquote { margin:8px 0 0 25px; padding:6px 0 6px 11px; border-left:2px solid var(--line-hot);
+                    font:12px/1.6 var(--mono); color:var(--muted); }
+
+/* ── Scrollbars ─────────────────────────────────────────────────────── */
+::-webkit-scrollbar { width:9px; height:9px; }
+::-webkit-scrollbar-track { background:var(--panel-2); }
+::-webkit-scrollbar-thumb { background:var(--line-hot); border-radius:0; }
+::-webkit-scrollbar-thumb:hover { background:var(--accent-dim); }
+
+@media (max-width:1000px) {
+  #grid { grid-template-columns:1fr; height:auto; }
+  .scroll { max-height:55vh; } #flags { max-height:30vh; }
+}
+@media (prefers-reduced-motion:reduce) { * { animation:none !important; transition:none !important; } }
+</style>
+</head>
+<body>
+<header>
+  <h1>Transcript Cleanup</h1>
+  <small>local runtime · text goes only to the Google Gemini API</small>
+</header>
+<main>
+  <details id="input" open>
+    <summary>Input</summary>
+    <div class="form">
+      <div id="drop">Drop a .txt, .md, .vtt, .srt or .docx file here, or
+        <input id="file" type="file" accept=".txt,.md,.vtt,.srt,.docx" aria-label="Choose a transcript file">
+      </div>
+      <label>Or paste text
+        <textarea id="text" spellcheck="false" placeholder="Paste transcript text here"></textarea>
+      </label>
+      <div id="info">No transcript loaded</div>
+      <label>Glossary (optional): names, acronyms and product terms, one per line
+        <textarea id="gloss" spellcheck="false" placeholder="Priya Raghunathan&#10;Kubernetes&#10;ACME-Sync (our sync product)"></textarea>
+      </label>
+      <div><button id="go" class="primary">Clean transcript</button> <button id="stop" hidden>Stop</button></div>
+    </div>
+  </details>
+
+  <div id="status" hidden>
+    <progress id="bar" value="0" max="1"></progress>
+    <div id="stat"></div>
+    <div id="note" role="status"></div>
+  </div>
+
+  <section id="result" hidden>
+    <div id="tools">
+      <button id="approve" class="primary" disabled>Approve &amp; save</button>
+      <button id="copy-brief" disabled>Copy action items</button>
+      <button id="regen" disabled>Re-run agent</button>
+      <span class="gap"></span>
+      <button id="copy" disabled>Copy cleaned text</button>
+      <button id="dl-md" disabled>Download .md</button>
+      <button id="dl-txt" disabled>Download .txt</button>
+    </div>
+
+    <section class="pane" id="briefpane">
+      <h2>Action Items <span id="bstate"></span></h2>
+      <div class="scroll md" id="B" tabindex="0" role="region" aria-label="Action items"></div>
+    </section>
+
+    <details id="tr" open>
+    <summary>Corrected transcript &amp; flags</summary>
+    <div id="grid">
+      <section class="pane"><h2>Original</h2><div class="scroll" id="L" tabindex="0" role="region" aria-label="Original transcript"></div></section>
+      <section class="pane"><h2>Cleaned</h2><div class="scroll" id="R" tabindex="0" role="region" aria-label="Cleaned transcript"></div></section>
+      <aside class="pane"><h2>Flags <span id="nflags">(0)</span></h2><ol id="flags"></ol></aside>
+    </div>
+    </details>
+  </section>
+</main>
+<script>
+const $ = id => document.getElementById(id);
+const L = $('L'), R = $('R');
+const esc = s => s.replace(/[&<>]/g, c => ({'&': '&amp;', '<': '&lt;', '>': '&gt;'}[c]));
+const words = s => (s.match(/\S+/g) || []).length;
+const num = n => n.toLocaleString();
+const clock = s => `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, '0')}`;
+let filename = '', loaded = ''; // loaded: the text as extracted from `filename`
+let run = null; // state of the current (or last) run
+
+// ---------------------------------------------------------------- input
+function info() {
+  const t = $('text').value;
+  if (!t) filename = '';
+  const name = filename ? filename + (t === loaded ? '' : ' (edited)') : 'Pasted text';
+  $('info').textContent = t ? `${name} · ${num(words(t))} words` : 'No transcript loaded';
+}
+
+async function load(file) {
+  if (!file) return;
+  if (file.size > 20e6) { $('info').textContent = 'That file is over 20 MB.'; return; }
+  $('info').textContent = `Reading ${file.name}…`;
+  try {
+    const res = await fetch('/extract?name=' + encodeURIComponent(file.name), {method: 'POST', body: file});
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.detail || res.statusText);
+    filename = file.name;
+    $('text').value = loaded = data.text;
+  } catch (e) {
+    $('info').textContent = 'Could not load file: ' + e.message;
+    return;
+  }
+  info();
+}
+
+$('text').addEventListener('input', info);
+$('file').addEventListener('change', e => { load(e.target.files[0]); e.target.value = ''; });
+const drop = $('drop');
+for (const t of ['dragenter', 'dragover']) drop.addEventListener(t, e => { e.preventDefault(); drop.classList.add('over'); });
+for (const t of ['dragleave', 'drop']) drop.addEventListener(t, e => { e.preventDefault(); drop.classList.remove('over'); });
+drop.addEventListener('drop', e => load(e.dataTransfer.files[0]));
+for (const t of ['dragover', 'drop']) addEventListener(t, e => e.preventDefault()); // a miss must not open the file
+
+// ------------------------------------------------------------------ run
+$('go').onclick = start;
+$('stop').onclick = () => run && run.ctrl.abort();
+
+function busy(on) {
+  $('go').disabled = on;
+  $('stop').hidden = !on;
+  for (const id of ['copy', 'dl-md', 'dl-txt']) $(id).disabled = on;
+  const a = run && run.agent;
+  const ready = a && a.done && (a.items.length || a.questions.length);
+  for (const id of ['approve', 'copy-brief']) $(id).disabled = on || !ready;
+  $('regen').disabled = on || !run || !run.chunks.some(c => c.done);
+}
+function note(msg, err = false) { $('note').textContent = msg; $('note').className = err ? 'err' : ''; }
+
+function tick() {
+  const r = run, t = r.tokens;
+  const label = {
+    running: `Chunk ${Math.max(r.n, 1)} of ${r.m || '…'}`, done: `Done, ${r.m} chunks`,
+    stopped: `Stopped at chunk ${r.n} of ${r.m}`, error: `Failed at chunk ${r.n} of ${r.m}`,
+  }[r.state];
+  $('stat').textContent = `${label} · ${num(t.input + t.output)} tokens (${num(t.input)} in, ${num(t.output)} out) · ${clock((Date.now() - r.t0) / 1000)}`;
+}
+
+async function start() {
+  const text = $('text').value;
+  if (!text.trim()) { $('info').textContent = 'Load a file or paste some text first.'; return; }
+  const r = run = {ctrl: new AbortController(), t0: Date.now(), name: filename, chunks: [], n: 0, m: 0,
+                   state: 'running', tokens: {input: 0, output: 0}, follow: true, id: '', agent: null};
+  L.replaceChildren(); R.replaceChildren(); shown = null; showFlags();
+  $('bstate').textContent = '';
+  $('B').innerHTML = '<p class="empty-note">◦ waiting for the corrected transcript…</p>';
+  $('input').open = false; $('status').hidden = $('result').hidden = false;
+  $('bar').value = 0; note(''); busy(true); tick();
+  const timer = setInterval(tick, 1000);
+  try {
+    const res = await fetch('/clean', {
+      method: 'POST', headers: {'Content-Type': 'application/json'}, signal: r.ctrl.signal,
+      body: JSON.stringify({text, glossary: $('gloss').value, filename}),
+    });
+    if (!res.ok) throw new Error((await res.json().catch(() => ({}))).detail || res.statusText);
+    await readSSE(res.body, handle);
+    if (r.state === 'running') throw new Error('The connection closed before the run finished.');
+  } catch (e) {
+    if (e.name === 'AbortError') { r.state = 'stopped'; note('Stopped. Finished chunks are saved in runs/. Unfinished ones export as their original text.'); }
+    else { r.state = 'error'; note(e.message, true); }
+  } finally {
+    clearInterval(timer); tick(); busy(false);
+  }
+  if (r.state === 'done') await runAgent();  // the agent pass is its own request
+}
+
+// The model drives this one: it decides what to record, via tool calls. Nothing it proposes
+// is written anywhere until you press Approve & save.
+async function runAgent() {
+  const r = run;
+  r.ctrl = new AbortController();
+  busy(true);
+  $('bstate').textContent = '· agent working';
+  try {
+    const res = await fetch('/agent', {
+      method: 'POST', headers: {'Content-Type': 'application/json'}, signal: r.ctrl.signal,
+      body: JSON.stringify({text: cleaned(), glossary: $('gloss').value}),
+    });
+    if (!res.ok) throw new Error((await res.json().catch(() => ({}))).detail || res.statusText);
+    await readSSE(res.body, handle);
+  } catch (e) {
+    $('bstate').textContent = '· failed';
+    if (e.name === 'AbortError') note('Agent stopped. The cleaned transcript is saved.');
+    else note(e.message, true);
+  } finally { busy(false); tick(); }
+}
+
+async function readSSE(body, onEvent) {
+  const reader = body.getReader(), dec = new TextDecoder();
+  let buf = '';
+  for (;;) {
+    const {done, value} = await reader.read();
+    if (done) return;
+    buf += dec.decode(value, {stream: true});
+    for (let i; (i = buf.indexOf('\n\n')) >= 0; buf = buf.slice(i + 2)) {
+      const frame = buf.slice(0, i);
+      if (frame.startsWith('data: ')) onEvent(JSON.parse(frame.slice(6)));
+    }
+  }
+}
+
+function handle(ev) {
+  const r = run, c = r.chunks[ev.n - 1];
+  if (ev.type === 'start') {
+    r.m = ev.chunks.length;
+    r.chunks = ev.chunks.map(orig => ({orig, ow: words(orig), text: '', done: false, flags: [], end: null, error: ''}));
+    $('bar').max = r.m;
+    L.replaceChildren(...r.chunks.map(k => Object.assign(document.createElement('div'), {className: 'chunk', textContent: k.orig.trimEnd()})));
+    R.replaceChildren(...r.chunks.map(() => Object.assign(document.createElement('div'), {className: 'chunk wait'})));
+  } else if (ev.type === 'chunk_start') {
+    r.n = ev.n; R.children[ev.n - 1].className = 'chunk busy'; note('');
+  } else if (ev.type === 'delta') {
+    c.text += ev.text; schedule(ev.n - 1);
+  } else if (ev.type === 'retry') {
+    c.text = ''; render(ev.n - 1);
+    note(`Chunk ${ev.n} failed (${ev.error}). Retrying, attempt ${ev.attempt} of ${ev.of}.`);
+  } else if (ev.type === 'chunk_end') {
+    Object.assign(c, {text: ev.text, done: true, error: ev.error});
+    r.tokens = ev.tokens; render(ev.n - 1); $('bar').value = ev.n;
+    note(ev.ok ? '' : `Chunk ${ev.n} failed after all retries (${ev.error}). Its original text is kept and marked [CHUNK FAILED].`, !ev.ok);
+  } else if (ev.type === 'done') {
+    r.state = 'done'; r.tokens = ev.tokens; r.id = ev.run;
+    note(`Saved to runs/${ev.run}` + (ev.failed.length ? `. Failed chunks: ${ev.failed.join(', ')}.` : '.'), ev.failed.length > 0);
+  } else if (ev.type === 'agent_start') {
+    r.agent = {summary: '', items: [], questions: [], log: [], done: false};
+    $('bstate').textContent = '· agent working'; renderAgent();
+  } else if (ev.type === 'agent_call') {
+    const a = ev.args || {};
+    if (ev.name === 'set_summary') r.agent.summary = a.summary || '';
+    r.agent.log.push([ev.name, a.title || a.question || 'recorded']);
+    renderAgent();
+  } else if (ev.type === 'agent_retry') {
+    note(`Agent call failed (${ev.error}). Retrying, attempt ${ev.attempt} of ${ev.of}.`);
+  } else if (ev.type === 'agent_note') {
+    note(ev.message);
+  } else if (ev.type === 'agent_end') {
+    Object.assign(r.agent, {
+      summary: ev.summary, done: true,
+      items: ev.items.map(i => ({...i, on: true})),
+      questions: ev.questions.map(q => ({...q, on: true})),
+    });
+    r.tokens.input += ev.tokens.input; r.tokens.output += ev.tokens.output;
+    $('bstate').textContent = `· ${ev.items.length} proposed, review below`;
+    renderAgent();
+  } else if (ev.type === 'agent_error') {
+    $('bstate').textContent = '· failed';
+    $('B').innerHTML = `<p class="empty-note err">Agent failed: ${esc(ev.message)}</p>`;
+    note('The transcript was cleaned and saved; only the agent pass failed. Press Re-run agent.', true);
+  } else if (ev.type === 'error') {
+    throw new Error(ev.message);
+  }
+  tick();
+}
+
+// ------------------------------------------------------------ rendering
+const FLAG = /\[FLAG:[^\]]*\]|\[CHUNK FAILED\]/g;
+
+// One pass over a chunk: escaped HTML with flags wrapped in <mark>, plus the flag list.
+// `st` carries paragraph number, latest leading timestamp and flag count over from the previous chunk.
+function scan(text, st, error) {
+  let html = '';
+  const flags = [];
+  text.trimEnd().split(/(\n[ \t]*\n\s*)/).forEach((part, k) => {
+    if (k % 2) { html += part; return; } // blank-line separator, kept as is
+    if (!part) return;
+    st.para++;
+    const ts = part.match(/^\W*(\d{1,2}:\d{2}(?::\d{2})?(?:[.,]\d+)?)/);
+    if (ts) st.ts = ts[1];
+    let last = 0;
+    for (const m of part.matchAll(FLAG)) {
+      const fail = m[0][1] === 'C';
+      const id = st.flag++;
+      html += esc(part.slice(last, m.index)) + `<mark id="f${id}"${fail ? ' class="fail"' : ''}>${esc(m[0])}</mark>`;
+      last = m.index + m[0].length;
+      flags.push({
+        id, fail, para: st.para, ts: st.ts,
+        before: part.slice(Math.max(0, m.index - 60), m.index).replace(/\s+/g, ' '),
+        why: fail ? (error || 'This chunk could not be cleaned; the original text is kept.') : m[0].slice(6, -1).trim(),
+      });
+    }
+    html += esc(part.slice(last));
+  });
+  return {html, flags};
+}
+
+// Deltas arrive faster than the screen refreshes, so redraw at most once per frame.
+const queued = new Set();
+let frame = 0;
+const schedule = i => {
+  queued.add(i);
+  frame ||= requestAnimationFrame(() => { frame = 0; queued.forEach(render); queued.clear(); });
+};
+
+function render(i) {
+  const cs = run.chunks, c = cs[i];
+  const st = i ? {...cs[i - 1].end} : {para: 0, ts: '', flag: 0};
+  const {html, flags} = scan(c.text, st, c.error);
+  Object.assign(c, {flags, end: st});
+  const el = R.children[i];
+  el.className = c.text || c.done ? 'chunk' : 'chunk busy';
+  el.innerHTML = html;
+  showFlags();
+  if (run.follow && run.state === 'running') { setScroll(R, R.scrollHeight); mapScroll(R, L); }
+}
+
+let shown = null;
+function showFlags() {
+  const all = run.chunks.flatMap(c => c.flags);
+  const sig = all.map(f => f.id + f.why).join('|');
+  if (sig === shown) return;
+  shown = sig;
+  $('nflags').textContent = `(${all.length})`;
+  $('flags').innerHTML = all.length ? all.map(f =>
+    `<li><button data-id="f${f.id}"><span class="loc">${f.fail ? '⚠ ' : ''}¶${f.para}${f.ts ? ' · ' + esc(f.ts) : ''}</span>` +
+    `<span class="ex">…${esc(f.before)}</span><span class="why">${esc(f.why)}</span></button></li>`).join('')
+    : '<li class="empty">No flags yet.</li>';
+}
+
+$('flags').addEventListener('click', e => {
+  const b = e.target.closest('button');
+  const mark = b && document.getElementById(b.dataset.id);
+  if (!mark) return;
+  run.follow = false;
+  mark.scrollIntoView({block: 'center', behavior: 'smooth'});
+  mark.classList.add('pulse');
+  setTimeout(() => mark.classList.remove('pulse'), 1600);
+});
+
+// ------------------------------------------------------------ scroll sync
+// Maps the top of one pane to the same relative spot inside the same chunk of the other.
+// ponytail: chunk-level anchors; drifts within a chunk if the edits are uneven. Anchor per paragraph if it bothers you.
+const ours = new Set(); // panes with a scroll event pending from our own setScroll, so it isn't taken for the user
+function setScroll(pane, top) {
+  const before = pane.scrollTop;
+  pane.scrollTop = top;
+  if (pane.scrollTop !== before) ours.add(pane); // the browser only fires a scroll event if the position changed
+}
+// Share of chunk i already cleaned. A streaming chunk's cleaned box only covers that share of its original.
+const share = i => { const c = run.chunks[i]; return c.done ? 1 : Math.max(0.001, Math.min(1, words(c.text) / c.ow)); };
+function mapScroll(from, to) {
+  const A = from.children, B = to.children;
+  if (!run || !A.length || A.length !== B.length) return;
+  let i = 0;
+  while (i + 1 < A.length && A[i + 1].offsetTop <= from.scrollTop) i++;
+  const f = (from.scrollTop - A[i].offsetTop) / (A[i].offsetHeight || 1);
+  const s = share(i), t = from === R ? f * s : f; // t: position along the chunk's real content
+  setScroll(to, B[i].offsetTop + (to === R ? Math.min(1, t / s) : t) * B[i].offsetHeight);
+}
+for (const [p, q] of [[L, R], [R, L]]) {
+  p.addEventListener('scroll', () => {
+    if (ours.delete(p)) return;
+    if (run) run.follow = p === R && p.scrollHeight - p.scrollTop - p.clientHeight < 40; // follow the stream until you scroll away
+    mapScroll(p, q);
+  });
+}
+
+// ---------------------------------------------------------------- export
+// Chunks that never finished (Stop, error) export as their original text so nothing is silently dropped.
+const cleaned = () => run.chunks.map(c => c.done ? c.text : `[CHUNK NOT CLEANED]\n\n${c.orig}`).join('');
+function flash(btn, msg) { const t = btn.textContent; btn.textContent = msg; setTimeout(() => btn.textContent = t, 1200); }
+$('copy').onclick = async e => {
+  try { await navigator.clipboard.writeText(cleaned()); flash(e.target, 'Copied'); }
+  catch { flash(e.target, 'Copy failed'); }
+};
+function download(ext, type) {
+  const a = Object.assign(document.createElement('a'), {
+    download: (run.name.replace(/\.[^.]+$/, '') || 'transcript') + '-cleaned.' + ext,
+    href: URL.createObjectURL(new Blob([cleaned()], {type: type + ';charset=utf-8'})),
+  });
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+}
+$('dl-md').onclick = () => download('md', 'text/markdown');
+$('dl-txt').onclick = () => download('txt', 'text/plain');
+
+// ------------------------------------------------------- action items
+// Renders what the agent proposed as a checklist you approve. Every value is escaped: the
+// model chose these strings, so they are data, never markup.
+function renderAgent() {
+  const a = run && run.agent;
+  if (!a) return;
+  const out = [];
+  if (a.log.length && !a.done) {
+    out.push('<div class="log">' + a.log.map(([tool, what]) =>
+      `<div><span class="tool">${esc(tool)}</span> &nbsp;${esc(what)}</div>`).join('') + '</div>');
+  }
+  if (a.summary) out.push(`<h2>Summary</h2><p>${esc(a.summary)}</p>`);
+
+  if (a.items.length) {
+    out.push('<h2>Action items</h2>');
+    for (const owner of [...new Set(a.items.map(i => i.owner))]) {
+      out.push(`<h3>${esc(owner)}</h3><ul class="chk">`);
+      a.items.forEach((i, n) => {
+        if (i.owner !== owner) return;
+        const cls = [i.on ? '' : 'off', i.blocking ? 'blocking' : ''].filter(Boolean).join(' ');
+        out.push(
+          `<li class="${cls}">` +
+          `<label><input type="checkbox" data-kind="i" data-n="${n}"${i.on ? ' checked' : ''}>` +
+          `<span class="t">${esc(i.title)}</span></label>` +
+          ((i.due || i.blocking) ? '<div class="meta">' +
+            (i.due ? `<span class="due">due ${esc(i.due)}</span>` : '') +
+            (i.blocking ? '<span class="blk">blocks others</span>' : '') + '</div>' : '') +
+          (i.detail ? `<div class="d">${esc(i.detail)}</div>` : '') +
+          (i.source_quote ? `<blockquote>${esc(i.source_quote)}</blockquote>` : '') +
+          '</li>');
+      });
+      out.push('</ul>');
+    }
+  }
+  if (a.questions.length) {
+    out.push('<h2>Open questions</h2><ul class="chk">');
+    a.questions.forEach((q, n) => out.push(
+      `<li class="${q.on ? '' : 'off'}">` +
+      `<label><input type="checkbox" data-kind="q" data-n="${n}"${q.on ? ' checked' : ''}>` +
+      `<span class="t">${esc(q.question)}</span></label>` +
+      (q.raised_by ? `<div class="meta"><span>raised by ${esc(q.raised_by)}</span></div>` : '') +
+      (q.why_open ? `<div class="d">${esc(q.why_open)}</div>` : '') + '</li>'));
+    out.push('</ul>');
+  }
+  if (!out.length) out.push('<p class="empty-note">▶ reading the transcript…</p>');
+  if (a.done && !a.items.length && !a.questions.length) {
+    out.push('<p class="empty-note">The agent found no action items in this transcript.</p>');
+  }
+  $('B').innerHTML = out.join('');
+}
+
+// Unchecked items are simply left out of the commit.
+$('B').addEventListener('change', e => {
+  const c = e.target.closest('input[type=checkbox]');
+  if (!c || !run || !run.agent) return;
+  const list = c.dataset.kind === 'i' ? run.agent.items : run.agent.questions;
+  list[+c.dataset.n].on = c.checked;
+  c.closest('li').classList.toggle('off', !c.checked);
+  busy(false);
+});
+
+const approved = () => ({
+  summary: run.agent.summary,
+  items: run.agent.items.filter(i => i.on).map(({on, ...i}) => i),
+  questions: run.agent.questions.filter(q => q.on).map(({on, ...q}) => q),
+});
+
+// Writes actions.json and actions.md into the run directory. Local files only.
+$('approve').onclick = async e => {
+  if (!run || !run.agent) return;
+  if (!run.id) { note('This run was not saved, so there is nowhere to write to.', true); return; }
+  const btn = e.target;
+  btn.disabled = true;
+  try {
+    const res = await fetch('/commit', {
+      method: 'POST', headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({run: run.id, ...approved()}),
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.detail || res.statusText);
+    flash(btn, 'Saved');
+    note(`Saved ${data.items} item(s) and ${data.questions} question(s) to runs/${data.run}/actions.md and actions.json.`);
+  } catch (err) {
+    note('Could not save: ' + err.message, true);
+  } finally { busy(false); }
+};
+
+$('regen').onclick = () => runAgent();
+
+// Plain-text rendering of what is currently ticked, for the clipboard.
+function asText() {
+  const a = approved(), L = [];
+  if (a.summary) L.push('SUMMARY', '', a.summary, '');
+  if (a.items.length) {
+    L.push('ACTION ITEMS', '');
+    for (const owner of [...new Set(a.items.map(i => i.owner))]) {
+      L.push(owner);
+      for (const i of a.items.filter(x => x.owner === owner)) {
+        L.push(`  - ${i.title}${i.due ? ` (due ${i.due})` : ''}${i.blocking ? ' [blocks others]' : ''}`);
+        if (i.detail) L.push(`    ${i.detail}`);
+      }
+      L.push('');
+    }
+  }
+  if (a.questions.length) {
+    L.push('OPEN QUESTIONS', '');
+    for (const q of a.questions) L.push(`  - ${q.question}${q.raised_by ? ` (raised by ${q.raised_by})` : ''}`);
+  }
+  return L.join('\n');
+}
+$('copy-brief').onclick = async e => {
+  try { await navigator.clipboard.writeText(asText()); flash(e.target, 'Copied'); }
+  catch { flash(e.target, 'Copy failed'); }
+};
+</script>
+</body>
+</html>

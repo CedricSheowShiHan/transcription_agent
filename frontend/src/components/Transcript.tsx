@@ -1,0 +1,182 @@
+import { motion } from 'motion/react';
+import { useEffect, useRef } from 'react';
+import { Card } from './Bits';
+import { scan, words } from '../lib/scan';
+import type { Chunk, Flag, ScanState } from '../lib/types';
+
+/**
+ * Original / cleaned panes with scroll sync, and the flags list.
+ * ponytail: chunk-level scroll anchors, as in the previous build; drifts within a long chunk
+ * if the edits are uneven. Anchor per paragraph if that becomes annoying.
+ */
+export function Transcript({
+  chunks,
+  running,
+  follow,
+  setFollow,
+}: {
+  chunks: Chunk[];
+  running: boolean;
+  follow: boolean;
+  setFollow: (b: boolean) => void;
+}) {
+  const L = useRef<HTMLDivElement>(null);
+  const R = useRef<HTMLDivElement>(null);
+  const ours = useRef(new Set<Element>());
+
+  // Recompute flags per chunk, threading paragraph/flag counters through in order.
+  const st: ScanState = { para: 0, ts: '', flag: 0 };
+  const scanned = chunks.map((c) => {
+    const r = scan(c.text, st, c.error);
+    return { ...r, chunk: c };
+  });
+  const flags: Flag[] = scanned.flatMap((s) => s.flags);
+
+  useEffect(() => {
+    if (!running || !follow || !R.current) return;
+    R.current.scrollTop = R.current.scrollHeight;
+  }, [chunks, running, follow]);
+
+  function setScroll(pane: HTMLDivElement, top: number) {
+    const before = pane.scrollTop;
+    pane.scrollTop = top;
+    if (pane.scrollTop !== before) ours.current.add(pane);
+  }
+  const share = (i: number) => {
+    const c = chunks[i];
+    return c.done ? 1 : Math.max(0.001, Math.min(1, words(c.text) / (c.ow || 1)));
+  };
+  function map(from: HTMLDivElement, to: HTMLDivElement) {
+    const A = from.children, B = to.children;
+    if (!A.length || A.length !== B.length) return;
+    let i = 0;
+    while (i + 1 < A.length && (A[i + 1] as HTMLElement).offsetTop <= from.scrollTop) i++;
+    const a = A[i] as HTMLElement, b = B[i] as HTMLElement;
+    const f = (from.scrollTop - a.offsetTop) / (a.offsetHeight || 1);
+    const s = share(i);
+    const t = from === R.current ? f * s : f;
+    setScroll(to, b.offsetTop + (to === R.current ? Math.min(1, t / s) : t) * b.offsetHeight);
+  }
+  function onScroll(self: HTMLDivElement | null, other: HTMLDivElement | null) {
+    if (!self || !other) return;
+    if (ours.current.delete(self)) return;
+    if (self === R.current) {
+      setFollow(self.scrollHeight - self.scrollTop - self.clientHeight < 40);
+    }
+    map(self, other);
+  }
+
+  function jump(id: number) {
+    setFollow(false);
+    const el = document.getElementById(`f${id}`);
+    if (!el) return;
+    el.scrollIntoView({ block: 'center', behavior: 'smooth' });
+    el.animate(
+      [
+        { boxShadow: '0 0 0 0 rgba(99,102,241,0)' },
+        { boxShadow: '0 0 0 4px rgba(99,102,241,0.35)' },
+        { boxShadow: '0 0 0 0 rgba(99,102,241,0)' },
+      ],
+      { duration: 1400, easing: 'ease-out' },
+    );
+  }
+
+  const pane =
+    'h-full overflow-auto p-5 font-mono text-[13px] leading-[1.85] whitespace-pre-wrap [overflow-wrap:anywhere]';
+
+  return (
+    <div className="grid h-[68vh] min-h-[26rem] grid-cols-1 gap-4 lg:grid-cols-[1fr_1fr_21rem]">
+      <Card title="Original" bodyClass="min-h-0">
+        <div ref={L} onScroll={() => onScroll(L.current, R.current)} className={`${pane} text-dim`}>
+          {chunks.map((c, i) => (
+            <div key={i} className={i ? 'mt-5 border-t border-dashed border-edge pt-5' : ''}>
+              {c.orig.trimEnd()}
+            </div>
+          ))}
+        </div>
+      </Card>
+
+      <Card title="Cleaned" bodyClass="min-h-0">
+        <div ref={R} onScroll={() => onScroll(R.current, L.current)} className={pane}>
+          {scanned.map(({ segs, chunk }, i) => (
+            <div key={i} className={i ? 'mt-5 border-t border-dashed border-edge pt-5' : ''}>
+              {!chunk.text && !chunk.done ? (
+                <Waiting active={running && i === chunks.findIndex((x) => !x.done)} />
+              ) : (
+                segs.map((s, k) =>
+                  s.flagId === null ? (
+                    <span key={k}>{s.text}</span>
+                  ) : (
+                    <mark
+                      key={k}
+                      id={`f${s.flagId}`}
+                      className={`rounded px-1 py-px font-medium ${
+                        s.fail ? 'bg-warn/15 text-warn' : 'bg-brand-soft text-brand'
+                      }`}
+                    >
+                      {s.text}
+                    </mark>
+                  ),
+                )
+              )}
+            </div>
+          ))}
+        </div>
+      </Card>
+
+      <Card
+        title="Flags"
+        right={
+          <span className="rounded-full bg-sunken px-2 py-0.5 text-[11.5px] font-semibold text-dim">
+            {flags.length}
+          </span>
+        }
+        bodyClass="min-h-0"
+      >
+        <ol className="h-full overflow-auto">
+          {flags.length === 0 && (
+            <li className="p-5 text-[13px] text-dim">No flags — nothing needed checking.</li>
+          )}
+          {flags.map((f) => (
+            <li key={f.id}>
+              <motion.button
+                whileHover={{ x: 3 }}
+                onClick={() => jump(f.id)}
+                className="grid w-full gap-1.5 border-b border-edge px-4 py-3.5 text-left transition-colors hover:bg-sunken"
+              >
+                <span className="text-[11px] font-semibold tracking-wide text-faint uppercase">
+                  {f.fail ? '⚠ ' : ''}¶{f.para}
+                  {f.ts ? ` · ${f.ts}` : ''}
+                </span>
+                <span className="truncate font-mono text-[11.5px] text-faint">…{f.before}</span>
+                <span className="text-[13px] leading-snug text-ink">{f.why}</span>
+              </motion.button>
+            </li>
+          ))}
+        </ol>
+      </Card>
+    </div>
+  );
+}
+
+function Waiting({ active }: { active: boolean }) {
+  return (
+    <span className="inline-flex items-center gap-2 rounded-full bg-sunken px-3 py-1 text-[11.5px] font-medium text-dim">
+      {active ? (
+        <>
+          <motion.span
+            animate={{ opacity: [1, 0.25, 1] }}
+            transition={{ duration: 1.15, repeat: Infinity }}
+            className="h-1.5 w-1.5 rounded-full bg-brand"
+          />
+          Cleaning…
+        </>
+      ) : (
+        <>
+          <span className="h-1.5 w-1.5 rounded-full bg-faint" />
+          Queued
+        </>
+      )}
+    </span>
+  );
+}

@@ -1,0 +1,20 @@
+# The live Gemini key. .env.example is the template that is tracked.
+.env
+
+# Confidential. Every meeting you have ever run through this, in plain text.
+runs/
+
+# Real people: names, employers, roles, and notes about them. Local only.
+memory/
+
+# Environments and build output. run.sh recreates all three.
+.venv/
+__pycache__/
+*.pyc
+frontend/node_modules/
+frontend/dist/
+
+# Leftovers from the Anthropic -> Gemini port.
+*.bak
+
+.DS_Store
