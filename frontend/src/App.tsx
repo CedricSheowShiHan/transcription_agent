@@ -41,9 +41,7 @@ export default function App() {
   const [tab, setTab] = useState('actions');
   const [follow, setFollow] = useState(true);
   const [elapsed, setElapsed] = useState(0);
-  const [dark, setDark] = useState(
-    () => window.matchMedia?.('(prefers-color-scheme: dark)').matches ?? false,
-  );
+  const [dark, setDark] = useState(true);
 
   useEffect(() => {
     document.documentElement.classList.toggle('dark', dark);
