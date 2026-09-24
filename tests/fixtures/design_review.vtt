@@ -1,0 +1,41 @@
+WEBVTT
+
+NOTE
+Auto-generated caption file for the Project Comet design review. Speaker names were
+assigned by the conferencing tool and may be misspelled.
+
+1
+00:00:00.000 --> 00:00:07.500
+<v Marta Lindqvist>Alright, let's get started. Today we're reviewing the proposed schema change for the GraniteStore migration.
+
+2
+00:00:07.500 --> 00:00:15.200
+<v Marta Lindqvist>The short version is we want to split the events table into a hot table and a cold table, partitioned by week.
+
+3
+00:00:15.200 --> 00:00:24.000
+<v Deshawn Ruiz>Quick question before you go further — does the cold table still need the same indexes as the hot one, or can we drop some of them?
+
+4
+00:00:24.000 --> 00:00:34.800
+<v Marta Lindqvist>Good question. We can drop the composite index on user id and session id, since cold queries are almost always by week and category only.
+
+5
+00:00:34.800 --> 00:00:44.100
+<v Deshawn Ruiz>That should cut the storage overhead a fair bit. I'll pull the numbers from the last migration and share them before Friday.
+
+6
+00:00:44.100 --> 00:00:52.600
+<v Ines Okafor>One more thing — the rollback plan in the doc references the old PebbleDB cluster, which was decommissioned last month, so that section needs to be rewritten.
+
+7
+00:00:52.600 --> 00:01:02.300
+<v Marta Lindqvist>Right, thanks for catching that. I'll rewrite the rollback section to point at the GraniteStore snapshot instead and send the doc back out tomorrow.
+
+8
+00:01:02.300 --> 00:01:08.000
+<v Ines Okafor>Sounds good. I think that's everything on my end for now.
+
+9
+00:01:08.000 --> 00:01:14.500
+<v Marta Lindqvist>Great, let's pick this back up once the doc is updated. Thanks everyone.

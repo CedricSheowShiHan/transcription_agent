@@ -9,12 +9,22 @@ export function ActionItems({
   agent,
   working,
   onToggle,
+  finished,
 }: {
   agent: Agent | null;
   working: boolean;
   onToggle: (kind: 'i' | 'q', n: number, on: boolean) => void;
+  finished: boolean;
 }) {
-  if (!agent) return <Empty>Waiting for the corrected transcript…</Empty>;
+  if (!agent) {
+    return (
+      <Empty>
+        {finished
+          ? 'Off by default for this run — press Run action items above to extract them now.'
+          : 'Waiting for the corrected transcript…'}
+      </Empty>
+    );
+  }
   if (agent.failed) {
     return (
       <div className="m-5 flex items-start gap-3 rounded-lg border border-warn/30 bg-warn/8 px-4 py-3.5">

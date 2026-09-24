@@ -5,8 +5,28 @@ import type { Memo } from '../lib/types';
 
 // Stage three. Unlike the action items, nothing here is a checklist: a decision memo is read,
 // not ticked, so the whole thing is approved or not.
-export function MemoPanel({ memo, working }: { memo: Memo | null; working: boolean }) {
-  if (!memo) return <Empty>Waiting for the action items…</Empty>;
+export function MemoPanel({
+  memo,
+  working,
+  finished,
+  agentDone,
+}: {
+  memo: Memo | null;
+  working: boolean;
+  finished: boolean;
+  agentDone: boolean;
+}) {
+  if (!memo) {
+    return (
+      <Empty>
+        {!finished
+          ? 'Waiting for the action items…'
+          : !agentDone
+            ? 'Run action items first, from the Action items tab — this pass reasons over them.'
+            : 'Off by default for this run — press Run decision memo above to reason over it now.'}
+      </Empty>
+    );
+  }
   if (memo.failed) {
     return (
       <div className="m-5 flex items-start gap-3 rounded-lg border border-warn/30 bg-warn/8 px-4 py-3.5">

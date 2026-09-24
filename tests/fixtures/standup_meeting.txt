@@ -1,0 +1,23 @@
+Jordan Ellery: Okay, thanks everyone for hopping on. Let's do a quick round on Project Wombat before the sprint closes. Priya, you want to kick us off?
+
+Priya Adeyemi: Sure. So, um, the ingestion pipeline for BrightPath Robotics is basically done. We're pulling sensor logs from the warehouse fleet every fifteen minutes instead of hourly now. The, uh, the only snag is that Nimbus Cloud's storage bucket throttled us twice yesterday when we backfilled the last three months of history.
+
+Jordan Ellery: Is that going to block the demo on Thursday?
+
+Priya Adeyemi: No, I don't think so. We already switched to batched writes of five hundred records instead of streaming one at a time, and the throttling stopped. I'll keep an eye on it through Wednesday.
+
+Sam Okonkwo: I can help babysit that if you're out. I'm mostly done with my half anyway.
+
+Jordan Ellery: What's your half again, remind me.
+
+Sam Okonkwo: The alerting rules. So anytime a forklift battery drops below twenty percent or a sensor goes silent for more than ten minutes, it posts to the ops channel. I tested it against the staging fleet this morning and it fired correctly for both cases. The one thing I haven't tested is what happens when two alerts fire at the same second, so there might be a race condition in the dedup logic.
+
+Priya Adeyemi: That's worth checking before Thursday.
+
+Sam Okonkwo: Agreed, I'll write a quick test for it tonight.
+
+Jordan Ellery: Great. Last thing, has anyone heard back from the BrightPath ops lead about the extra warehouse in Denver?
+
+Priya Adeyemi: Not yet. I pinged her Tuesday and again this morning. If we don't hear back by end of week I think we just scope Denver out of the Thursday demo and add it next sprint.
+
+Jordan Ellery: Works for me. Okay, I think that covers it. Same time next week, and ping the channel if the throttling comes back.

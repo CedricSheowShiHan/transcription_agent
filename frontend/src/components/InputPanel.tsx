@@ -1,7 +1,7 @@
 import { AnimatePresence, motion } from 'motion/react';
 import { ChevronRight, FileText, Play, Square, Upload } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
-import { Btn, SPRING } from './Bits';
+import { Btn, SPRING, Toggle } from './Bits';
 import { num, words } from '../lib/scan';
 import type { Person } from '../lib/types';
 
@@ -11,11 +11,13 @@ const OK = ['.txt', '.md', '.vtt', '.srt', '.docx'];
 
 export function InputPanel({
   text, setText, gloss, setGloss, filename, setFilename,
+  deepAnalysis, setDeepAnalysis,
   busy, open, setOpen, known, onStart, onStop, onNote,
 }: {
   text: string; setText: (s: string) => void;
   gloss: string; setGloss: (s: string) => void;
   filename: string; setFilename: (s: string) => void;
+  deepAnalysis: boolean; setDeepAnalysis: (b: boolean) => void;
   busy: boolean; open: boolean; setOpen: (b: boolean) => void;
   known: Person[];
   onStart: () => void; onStop: () => void;
@@ -173,6 +175,13 @@ export function InputPanel({
                   className={`${field} min-h-[5.5rem] font-mono`}
                 />
               </Field>
+
+              <Toggle
+                on={deepAnalysis}
+                onChange={setDeepAnalysis}
+                label="Also extract action items & decision memo"
+                hint="Off by default — the decision memo pass alone can cost several times what cleaning does. You can still run either one later from its own tab."
+              />
 
               <div className="flex gap-2.5">
                 <Btn onClick={onStart} disabled={busy || !text.trim()} tone="primary">

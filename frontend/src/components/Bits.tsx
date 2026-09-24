@@ -72,6 +72,44 @@ export function Btn({
   );
 }
 
+/** Labeled on/off switch, for a setting rather than a per-item checklist tick (see `Tick` in
+ * ActionItems.tsx for that). */
+export function Toggle({
+  on,
+  onChange,
+  label,
+  hint,
+}: {
+  on: boolean;
+  onChange: (v: boolean) => void;
+  label: ReactNode;
+  hint?: ReactNode;
+}) {
+  return (
+    <label className="flex cursor-pointer items-start gap-3 rounded-lg border border-edge bg-sunken px-3.5 py-3 transition-colors hover:border-faint">
+      <button
+        type="button"
+        role="checkbox"
+        aria-checked={on}
+        onClick={() => onChange(!on)}
+        className={`mt-0.5 flex h-5 w-9 shrink-0 items-center rounded-full border transition-colors ${
+          on ? 'border-brand bg-brand' : 'border-edge bg-surface'
+        }`}
+      >
+        <motion.span
+          animate={{ x: on ? 18 : 2 }}
+          transition={SPRING}
+          className="h-3.5 w-3.5 rounded-full bg-white shadow-sm"
+        />
+      </button>
+      <span className="text-[13px] leading-snug">
+        <span className="font-medium text-ink">{label}</span>
+        {hint && <span className="mt-0.5 block text-[12px] text-dim">{hint}</span>}
+      </span>
+    </label>
+  );
+}
+
 /** From `copy-confirm`: the icon and label cross-fade through a blur into a checkmark. */
 export function CopyBtn({
   text,

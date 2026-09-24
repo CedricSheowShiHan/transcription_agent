@@ -12,7 +12,6 @@ Memory is a feedback loop, which means a wrong entry poisons later runs. Two gua
 entry records which runs it came from (`seen_in`) so a bad one can be traced, and `forget()`
 removes one by name. Nothing here reaches outside this directory.
 """
-import asyncio
 import json
 import re
 from datetime import datetime
@@ -21,7 +20,8 @@ from pathlib import Path
 from google import genai
 from google.genai import types
 
-from cleaner import MODEL, RETRIES, TEMPERATURE, THINKING_LEVEL, _fatal, _why
+from cleaner import TEMPERATURE, THINKING_LEVEL
+from gemini_loop import run_turns
 from prompts import build_memory_system, build_memory_user
 
 STORE = Path(__file__).parent / "memory" / "people.json"
@@ -363,43 +363,18 @@ async def learn(cleaned: str, items: list, run: str = "", glossary: str = ""):
     found = []
     usage = {"input": 0, "output": 0}
 
-    for turn in range(MAX_TURNS):
-        resp = None
-        for attempt in range(RETRIES + 1):
-            try:
-                resp = await client.aio.models.generate_content(model=MODEL, contents=contents,
-                                                                config=config)
-                break
-            except Exception as e:
-                why = _why(e)
-                if _fatal(e) or attempt == RETRIES:
-                    yield {"type": "memory_error", "message": why}
-                    return
-                yield {"type": "memory_retry", "attempt": attempt + 2, "of": RETRIES + 1,
-                       "error": why}
-                await asyncio.sleep(3 * 2 ** attempt)
+    def dispatch(name: str, args: dict) -> str:
+        if name == "remember_person" and (args.get("name") or "").strip():
+            found.append(args)
+            return f"person {len(found)} recorded"
+        return f"ignored {name}"
 
-        if u := resp.usage_metadata:
-            usage["input"] += u.prompt_token_count or 0
-            usage["output"] += ((u.candidates_token_count or 0) + (u.thoughts_token_count or 0))
-
-        calls = resp.function_calls or []
-        if not calls:
-            break
-
-        contents.append(resp.candidates[0].content)
-        replies = []
-        for call in calls:
-            args = dict(call.args or {})
-            if call.name == "remember_person" and (args.get("name") or "").strip():
-                found.append(args)
-                status = f"person {len(found)} recorded"
-            else:
-                status = f"ignored {call.name}"
-            yield {"type": "memory_call", "name": call.name, "args": args, "turn": turn + 1}
-            replies.append(types.Part.from_function_response(name=call.name,
-                                                             response={"status": status}))
-        contents.append(types.Content(role="user", parts=replies))
+    async for ev in run_turns(client, contents, config, dispatch, usage,
+                              prefix="memory", max_turns=MAX_TURNS,
+                              include_status=False, note_on_exhaustion=False):
+        yield ev
+        if ev["type"] == "memory_error":
+            return
 
     stats = merge(found, run)
     yield {"type": "memory_end", "people": load()["people"], "stats": stats, "tokens": usage}

@@ -10,9 +10,9 @@ import { Transcript } from './components/Transcript';
 import { Tabs } from './components/Tabs';
 import { ToastStack, useToasts, type ToastKind } from './components/Toast';
 import { postStream } from './lib/sse';
-import { clock, num, words } from './lib/scan';
+import { applyChunk, clock, num, words } from './lib/scan';
 import type {
-  Agent, Chunk, Decision, Item, Memo, Person, PersonEdit, Phase, Question,
+  Agent, Chunk, Decision, Item, Memo, Person, PersonEdit, Phase, Question, ScanState,
 } from './lib/types';
 
 const TOKENS0 = { input: 0, output: 0 };
@@ -22,9 +22,16 @@ export default function App() {
   const [gloss, setGloss] = useState('');
   const [filename, setFilename] = useState('');
   const [openInput, setOpenInput] = useState(true);
+  // Off by default: the memo stage alone can cost several times what cleaning does. The
+  // people-memory pass always runs regardless - it's cheap and only improves future runs.
+  const [deepAnalysis, setDeepAnalysis] = useState(false);
 
   const [phase, setPhase] = useState<Phase>('idle');
   const [chunks, setChunks] = useState<Chunk[]>([]);
+  // Per-flag operator overrides: flag id -> replacement text. Absent means "accept the model's
+  // wording as-is". Applied live in the Cleaned pane and, via `cleaned()` below, in every export
+  // and every downstream pass so an edit here doesn't need separate wiring anywhere else.
+  const [overrides, setOverrides] = useState<Record<number, string>>({});
   const [tokens, setTokens] = useState(TOKENS0);
   const [runId, setRunId] = useState('');
   const [agent, setAgent] = useState<Agent | null>(null);
@@ -81,6 +88,7 @@ export default function App() {
 
   const busy = phase === 'cleaning' || phase === 'agent' || phase === 'memo' || phase === 'learning';
   const started = phase !== 'idle';
+  const finished = phase === 'done' || phase === 'stopped' || phase === 'error';
 
   useEffect(() => {
     if (!busy) return;
@@ -94,18 +102,40 @@ export default function App() {
     setChunks(chunksRef.current);
   }, []);
 
-  /** Chunks that never finished export as their original text, so nothing is silently dropped. */
-  const cleaned = useCallback(
-    () => chunksRef.current.map((c) => (c.done ? c.text : `[CHUNK NOT CLEANED]\n\n${c.orig}`)).join(''),
-    [],
-  );
+  /** Per-flag override, or clear one back to the model's own wording (text === null). */
+  const onOverride = useCallback((id: number, text: string | null) => {
+    setOverrides((o) => {
+      if (text === null) {
+        if (!(id in o)) return o;
+        const next = { ...o };
+        delete next[id];
+        return next;
+      }
+      return { ...o, [id]: text };
+    });
+  }, []);
+
+  /**
+   * Chunks that never finished export as their original text, so nothing is silently dropped.
+   * Done chunks are re-scanned with the same flag-id threading Transcript.tsx uses, so operator
+   * overrides land on the exact spans shown on screen.
+   */
+  const cleaned = useCallback(() => {
+    const st: ScanState = { para: 0, ts: '', flag: 0 };
+    return chunksRef.current
+      .map((c) => {
+        const out = applyChunk(c.text, c.rawFlags, overrides, st, c.error);
+        return c.done ? out : `[CHUNK NOT CLEANED]\n\n${c.orig}`;
+      })
+      .join('');
+  }, [overrides]);
 
   function handle(ev: any) {
     switch (ev.type) {
       case 'start':
         putChunks(() =>
           ev.chunks.map((orig: string) => ({
-            orig, ow: words(orig), text: '', done: false, error: '', flags: [], end: null,
+            orig, ow: words(orig), text: '', done: false, error: '', rawFlags: [],
           })),
         );
         break;
@@ -118,7 +148,9 @@ export default function App() {
         break;
       case 'chunk_end':
         putChunks((cs) =>
-          cs.map((c, i) => (i === ev.n - 1 ? { ...c, text: ev.text, done: true, error: ev.error } : c)),
+          cs.map((c, i) =>
+            i === ev.n - 1 ? { ...c, text: ev.text, done: true, error: ev.error, rawFlags: ev.flags ?? [] } : c,
+          ),
         );
         setTokens(ev.tokens);
         if (!ev.ok) note(`Chunk ${ev.n} failed after all retries (${ev.error}). Original kept.`, 'err');
@@ -231,7 +263,7 @@ export default function App() {
     ctrl.current = new AbortController();
     t0.current = Date.now();
     setPhase('cleaning');
-    putChunks(() => []); setAgent(null); setMemo(null); agentRef.current = null;
+    putChunks(() => []); setAgent(null); setMemo(null); agentRef.current = null; setOverrides({});
     setRunId(''); setTokens(TOKENS0);
     setOpenInput(false); setFollow(true); setTab('transcript');
     let ok = false;
@@ -247,7 +279,7 @@ export default function App() {
         note(e.message, 'err');
       }
     }
-    if (ok) await runAgent();
+    if (ok) await (deepAnalysis ? runAgent() : runLearn());
   }
 
   /** The model drives this pass; nothing it proposes is written until Approve & save. */
@@ -518,6 +550,7 @@ export default function App() {
       <InputPanel
         text={text} setText={setText} gloss={gloss} setGloss={setGloss}
         filename={filename} setFilename={setFilename}
+        deepAnalysis={deepAnalysis} setDeepAnalysis={setDeepAnalysis}
         busy={busy} open={openInput} setOpen={setOpenInput} known={people}
         onStart={start} onStop={() => ctrl.current?.abort()} onNote={note}
       />
@@ -567,12 +600,21 @@ export default function App() {
               <Stat
                 label="Proposed"
                 value={agent?.done ? agent.items.length + agent.questions.length : '—'}
-                sub={agent?.done ? `${agent.items.length} actions · ${agent.questions.length} questions` : 'awaiting agent'}
+                sub={
+                  agent?.done ? `${agent.items.length} actions · ${agent.questions.length} questions`
+                  : finished ? 'not run this time'
+                  : 'awaiting agent'
+                }
               />
               <Stat
                 label="Decisions"
                 value={memo?.done ? memo.decisions.length : '—'}
-                sub={memo?.done ? 'reasoned at high effort' : phase === 'memo' ? 'thinking…' : 'awaiting memo'}
+                sub={
+                  memo?.done ? 'reasoned at high effort'
+                  : phase === 'memo' ? 'thinking…'
+                  : finished ? 'not run this time'
+                  : 'awaiting memo'
+                }
               />
             </div>
 
@@ -599,7 +641,7 @@ export default function App() {
                     </Btn>
                     <CopyBtn text={memoText} label="Copy memo" disabled={busy || !memoReady} />
                     <Btn onClick={runMemo} disabled={busy || !agent?.done} tone="ghost">
-                      <RefreshCw size={14} /> Re-think
+                      <RefreshCw size={14} /> {memo ? 'Re-think' : 'Run decision memo'}
                     </Btn>
                   </>
                 ) : tab === 'actions' ? (
@@ -609,7 +651,7 @@ export default function App() {
                     </Btn>
                     <CopyBtn text={asText} label="Copy items" disabled={busy || !ready} />
                     <Btn onClick={runAgent} disabled={busy || !chunks.some((c) => c.done)} tone="ghost">
-                      <RefreshCw size={14} /> Re-run agent
+                      <RefreshCw size={14} /> {agent ? 'Re-run agent' : 'Run action items'}
                     </Btn>
                   </>
                 ) : (
@@ -670,7 +712,7 @@ export default function App() {
                       className="h-[68vh] min-h-[26rem]"
                       bodyClass="overflow-auto"
                     >
-                      <MemoPanel memo={memo} working={phase === 'memo'} />
+                      <MemoPanel memo={memo} working={phase === 'memo'} finished={finished} agentDone={!!agent?.done} />
                     </Card>
                   ) : tab === 'actions' ? (
                     <Card
@@ -687,10 +729,17 @@ export default function App() {
                       className="h-[68vh] min-h-[26rem]"
                       bodyClass="overflow-auto"
                     >
-                      <ActionItems agent={agent} working={phase === 'agent'} onToggle={toggle} />
+                      <ActionItems agent={agent} working={phase === 'agent'} onToggle={toggle} finished={finished} />
                     </Card>
                   ) : (
-                    <Transcript chunks={chunks} running={phase === 'cleaning'} follow={follow} setFollow={setFollow} />
+                    <Transcript
+                      chunks={chunks}
+                      running={phase === 'cleaning'}
+                      follow={follow}
+                      setFollow={setFollow}
+                      overrides={overrides}
+                      onOverride={onOverride}
+                    />
                   )}
                 </motion.div>
               </AnimatePresence>

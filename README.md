@@ -108,4 +108,22 @@ README maps each reference to where its pattern ended up.
 - `gemini-3.x` **ignores `thinking_budget`** - it silently yields zero thinking. Use `thinking_level` (`LOW` / `MEDIUM` / `HIGH`; `MINIMAL` is rejected on 3.8-flash).
 - The app reads `GEMINI_API_KEY`. The SDK also accepts `GOOGLE_API_KEY`, but `app.py` checks the former.
 
-There are no tests, as requested.
+## Tests
+
+```bash
+pip install -r requirements.txt
+pytest -q
+```
+
+Runs from the repo root. Covers the pure logic in `cleaner.py` - no network access or API
+key needed, nothing hits the live Gemini API:
+
+- `tests/test_chunking.py` - the `chunk()` join-invariant (`"".join(chunk(text)) == text`)
+  holds across the sample fixtures, including with a forced small `target` that pushes the
+  paragraph/line/sentence fallback chain in `_units()`.
+- `tests/test_extract.py` - `extract_text()` round-trips `.txt` and `.vtt` fixtures and
+  rejects unsupported extensions.
+- `tests/test_flags.py` - `_parse_flags()` against well-formed, malformed and adversarial
+  `<flags>` blocks; it must never raise.
+- `tests/fixtures/` - three synthetic sample transcripts (plain multi-speaker `.txt`, a
+  WebVTT `.vtt`, and one long unbroken paragraph) used by the tests above.

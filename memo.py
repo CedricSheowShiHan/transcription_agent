@@ -10,7 +10,6 @@ Because this is the one stage whose value is the reasoning, it runs at a higher 
 than the rest of the pipeline (see MEMO_THINKING). Cleaning gets nothing from thinking and was
 measured to waste 77% of its output tokens on it; here it is the point.
 """
-import asyncio
 import json
 from datetime import datetime
 from pathlib import Path
@@ -19,7 +18,8 @@ from google import genai
 from google.genai import types
 
 from agent import _run_dir, _stop
-from cleaner import MODEL, RETRIES, TEMPERATURE, _fatal, _why
+from cleaner import MODEL, TEMPERATURE
+from gemini_loop import run_turns
 from prompts import build_memo, build_memo_system
 
 MAX_TURNS = 6
@@ -128,43 +128,11 @@ async def think(cleaned: str, items: list, questions: list, glossary: str = ""):
             return f"decision {len(decisions)} recorded"
         return f"unknown tool {name}"
 
-    for turn in range(MAX_TURNS):
-        resp = None
-        for attempt in range(RETRIES + 1):
-            try:
-                resp = await client.aio.models.generate_content(model=MODEL, contents=contents,
-                                                                config=config)
-                break
-            except Exception as e:
-                why = _why(e)
-                if _fatal(e) or attempt == RETRIES:
-                    yield {"type": "memo_error", "message": why}
-                    return
-                yield {"type": "memo_retry", "attempt": attempt + 2, "of": RETRIES + 1,
-                       "error": why}
-                await asyncio.sleep(3 * 2 ** attempt)
-
-        if u := resp.usage_metadata:
-            usage["input"] += u.prompt_token_count or 0
-            usage["output"] += ((u.candidates_token_count or 0) + (u.thoughts_token_count or 0))
-
-        calls = resp.function_calls or []
-        if not calls:
-            break
-
-        contents.append(resp.candidates[0].content)
-        replies = []
-        for call in calls:
-            args = dict(call.args or {})
-            status = record(call.name, args)
-            yield {"type": "memo_call", "name": call.name, "args": args, "status": status,
-                   "turn": turn + 1}
-            replies.append(types.Part.from_function_response(name=call.name,
-                                                             response={"status": status}))
-        contents.append(types.Content(role="user", parts=replies))
-    else:
-        yield {"type": "memo_note",
-               "message": f"Stopped after {MAX_TURNS} turns. Showing what was recorded so far."}
+    async for ev in run_turns(client, contents, config, record, usage,
+                              prefix="memo", max_turns=MAX_TURNS):
+        yield ev
+        if ev["type"] == "memo_error":
+            return
 
     yield {"type": "memo_end", "decisions": decisions, "consequences": consequences,
            "tokens": usage}

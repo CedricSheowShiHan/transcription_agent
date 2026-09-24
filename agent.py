@@ -7,17 +7,16 @@ it is finished; the loop below just executes what it asks for and feeds the resu
 Nothing here touches an external system. Tool calls only append to in-memory lists, and the
 result reaches disk when - and only when - the operator approves it and app.py calls `commit`.
 """
-import asyncio
 import json
 import re
 from datetime import datetime
 from pathlib import Path
-
 from google import genai
 from google.genai import types
 
 # Shared config and error helpers, so the agent and the cleaner behave the same way on failure.
-from cleaner import MODEL, RETRIES, RUNS_DIR, TEMPERATURE, THINKING_LEVEL, _fatal, _why
+from cleaner import MODEL, RUNS_DIR, TEMPERATURE, THINKING_LEVEL
+from gemini_loop import run_turns
 from prompts import build_agent_system, build_agent_user
 
 MAX_TURNS = 8          # hard stop: the loop is model-driven, so it needs a ceiling it cannot raise
@@ -136,44 +135,11 @@ async def propose(cleaned: str, glossary: str = ""):
             return f"open question {len(questions)} recorded"
         return f"unknown tool {name}"
 
-    for turn in range(MAX_TURNS):
-        resp = None
-        for attempt in range(RETRIES + 1):
-            try:
-                resp = await client.aio.models.generate_content(model=MODEL, contents=contents,
-                                                                config=config)
-                break
-            except Exception as e:
-                why = _why(e)
-                if _fatal(e) or attempt == RETRIES:
-                    yield {"type": "agent_error", "message": why}
-                    return
-                yield {"type": "agent_retry", "attempt": attempt + 2, "of": RETRIES + 1,
-                       "error": why}
-                await asyncio.sleep(3 * 2 ** attempt)
-
-        if u := resp.usage_metadata:
-            usage["input"] += u.prompt_token_count or 0
-            usage["output"] += ((u.candidates_token_count or 0) + (u.thoughts_token_count or 0))
-
-        calls = resp.function_calls or []
-        if not calls:
-            break  # the model is done and answered in plain text
-
-        contents.append(resp.candidates[0].content)
-        replies = []
-        for call in calls:
-            args = dict(call.args or {})
-            status = record(call.name, args)
-            yield {"type": "agent_call", "name": call.name, "args": args, "status": status,
-                   "turn": turn + 1}
-            replies.append(types.Part.from_function_response(name=call.name,
-                                                             response={"status": status}))
-        contents.append(types.Content(role="user", parts=replies))
-    else:
-        # Ran out of turns with the model still calling tools; keep what it recorded.
-        yield {"type": "agent_note",
-               "message": f"Stopped after {MAX_TURNS} turns. Showing what was recorded so far."}
+    async for ev in run_turns(client, contents, config, record, usage,
+                              prefix="agent", max_turns=MAX_TURNS):
+        yield ev
+        if ev["type"] == "agent_error":
+            return
 
     # Blocking items first, then the order the model recorded them in.
     items.sort(key=lambda x: not x["blocking"])

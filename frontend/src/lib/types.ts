@@ -1,9 +1,20 @@
+// What the model returns per flag: `corrected` is matched verbatim against the cleaned text
+// to find where it goes, the same way agent.py's `source_quote` is checked against the
+// transcript rather than trusting a character offset the model would have to compute itself.
+export interface RawFlag {
+  original: string;
+  corrected: string;
+  reason: string;
+}
+
 export interface Flag {
   id: number;
   fail: boolean;
+  located: boolean;  // false when `corrected` couldn't be found verbatim - still listed, no jump
   para: number;
   ts: string;
   before: string;
+  original: string;
   why: string;
 }
 
@@ -19,8 +30,7 @@ export interface Chunk {
   text: string;
   done: boolean;
   error: string;
-  flags: Flag[];
-  end: ScanState | null;
+  rawFlags: RawFlag[];
 }
 
 export interface Item {

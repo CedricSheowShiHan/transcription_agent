@@ -155,6 +155,39 @@ def chunk(text: str, target: int = CHUNK_WORDS) -> list[str]:
 # ------------------------------------------------------------------ pipeline
 
 _TAGS = re.compile(r"^\s*<transcript>\s*|\s*</transcript>\s*$")
+_FLAGS_START = "<flags>"
+
+
+def _flag_str(v) -> str:
+    return v.strip() if isinstance(v, str) else ""
+
+
+def _parse_flags(raw: str) -> list[dict]:
+    """Parse the <flags>[...]</flags> block the model appends after the transcript.
+
+    Never raises: a malformed block just yields no flags. The cleaned text - already split off
+    before this runs - is the part that matters, so a flags-parsing hiccup should not cost it.
+    """
+    raw = raw.strip()
+    if raw.endswith("</flags>"):
+        raw = raw[: -len("</flags>")].strip()
+    if not raw:
+        return []
+    try:
+        parsed = json.loads(raw)
+    except json.JSONDecodeError:
+        return []
+    if not isinstance(parsed, list):
+        return []
+    out = []
+    for f in parsed:
+        if not isinstance(f, dict):
+            continue
+        corrected, reason = _flag_str(f.get("corrected")), _flag_str(f.get("reason"))
+        if corrected and reason:
+            out.append({"original": _flag_str(f.get("original")), "corrected": corrected,
+                       "reason": reason})
+    return out
 
 
 def _fatal(e: Exception) -> bool:
@@ -183,7 +216,7 @@ async def clean(text: str, glossary: str = "", filename: str = ""):
     # Reads GEMINI_API_KEY from the environment; app.py has already checked it is set.
     client = genai.Client()  # retries are handled per chunk below
     t0 = time.monotonic()
-    outs, failed, usage = [], [], {"input": 0, "output": 0}
+    outs, failed, usage, all_flags = [], [], {"input": 0, "output": 0}, []
 
     run_dir = None
 
@@ -197,6 +230,8 @@ async def clean(text: str, glossary: str = "", filename: str = ""):
         (d / "input.txt").write_text(text, encoding="utf-8")
         (d / "output.txt").write_text("".join(outs), encoding="utf-8")
         (d / "system_prompt.txt").write_text(system, encoding="utf-8")
+        (d / "flags.json").write_text(json.dumps(all_flags, indent=2, ensure_ascii=False),
+                                      encoding="utf-8")
         meta = {
             "timestamp": datetime.now().astimezone().isoformat(timespec="seconds"),
             "model": MODEL,
@@ -204,6 +239,7 @@ async def clean(text: str, glossary: str = "", filename: str = ""):
             "chunks": len(chunks),
             "chunks_done": len(outs),
             "failed_chunks": failed,
+            "flags": len(all_flags),
             "tokens": usage,
             "elapsed_s": round(time.monotonic() - t0, 1),
         }
@@ -215,10 +251,10 @@ async def clean(text: str, glossary: str = "", filename: str = ""):
         for n, body in enumerate(chunks, 1):
             yield {"type": "chunk_start", "n": n}
             user = build_user(body.strip(), _tail(outs[-1]) if outs else "")
-            result, error = None, ""
+            result, flags, error = None, [], ""
             for attempt in range(RETRIES + 1):
                 try:
-                    result = ""
+                    result, sent = "", 0  # sent: how much of `result` has been yielded as delta
                     stream = await client.aio.models.generate_content_stream(
                         model=MODEL,
                         contents=user,
@@ -236,17 +272,29 @@ async def clean(text: str, glossary: str = "", filename: str = ""):
                     async for part in stream:
                         if part.text:
                             result += part.text
-                            yield {"type": "delta", "n": n, "text": part.text}
+                            # Stream only the transcript, never the <flags> JSON that follows it.
+                            # Held back: enough of the tail that a "<flags>" tag being typed
+                            # can't leak through split across two response parts.
+                            cut = result.find(_FLAGS_START)
+                            safe = cut if cut != -1 else max(sent, len(result) - len(_FLAGS_START) + 1)
+                            if safe > sent:
+                                yield {"type": "delta", "n": n, "text": result[sent:safe]}
+                                sent = safe
                         if part.candidates and part.candidates[0].finish_reason:
                             done = part.candidates[0].finish_reason
                         if part.usage_metadata:
                             used = part.usage_metadata
                     if done != types.FinishReason.STOP:
                         raise ValueError(f"stopped early ({done})")
-                    result = _TAGS.sub("", result).strip()
+                    cut = result.find(_FLAGS_START)
+                    cleaned_raw, flags_raw = (result[:cut], result[cut + len(_FLAGS_START):]) \
+                        if cut != -1 else (result, "")
+                    cleaned_raw = _TAGS.sub("", cleaned_raw).strip()
                     # ponytail: naive length check; catches truncation/summarising, not subtle edits
-                    if _words(body) > 30 and _words(result) < 0.6 * _words(body):
+                    if _words(body) > 30 and _words(cleaned_raw) < 0.6 * _words(body):
                         raise ValueError("output is much shorter than the input")
+                    flags = _parse_flags(flags_raw)
+                    result = cleaned_raw
                     if used:
                         usage["input"] += used.prompt_token_count or 0
                         # Thinking is billed as output, so fold it in rather than under-reporting.
@@ -254,7 +302,7 @@ async def clean(text: str, glossary: str = "", filename: str = ""):
                                             + (used.thoughts_token_count or 0))
                     break
                 except Exception as e:
-                    result = None
+                    result, flags = None, []
                     error = _why(e)
                     if _fatal(e):
                         yield {"type": "error", "message": f"{e.code}: {error}"}
@@ -269,7 +317,8 @@ async def clean(text: str, glossary: str = "", filename: str = ""):
             if not ok:
                 failed.append(n)
             outs.append(piece)
-            yield {"type": "chunk_end", "n": n, "ok": ok, "text": piece,
+            all_flags.extend({**f, "chunk": n} for f in flags)
+            yield {"type": "chunk_end", "n": n, "ok": ok, "text": piece, "flags": flags,
                    "error": "" if ok else error, "tokens": dict(usage)}
 
         saved = save()
